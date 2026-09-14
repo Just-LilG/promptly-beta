@@ -1,0 +1,143 @@
+// Hosted on Neon (serverless Postgres). DATABASE_URL is set in Vercel's
+// environment variables, not committed here — see .env.example for the
+// expected connection-string format.
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model User {
+  id        String   @id
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  // Auth.js fields — null/empty until someone actually signs in. A user row
+  // is created anonymously (via the cookie in user-session.ts) the moment
+  // they first use the app; signing in later attaches these fields to that
+  // same row rather than creating a second, disconnected identity.
+  email         String?   @unique
+  emailVerified DateTime?
+  name          String?
+  image         String?
+  password      String? // bcrypt hash; null for OAuth-only or still-anonymous users
+
+  accounts        Account[]
+  sessions        Session[]
+  onboarding      Onboarding?
+  streak          Streak?
+  conversations   Conversation[]
+  progress        Progress[]
+  workflows       Workflow[]
+  taskEvaluations TaskEvaluation[]
+}
+
+model Account {
+  userId            String
+  user              User    @relation(fields: [userId], references: [id], onDelete: Cascade)
+  type              String
+  provider          String
+  providerAccountId String
+  refresh_token     String?
+  access_token      String?
+  expires_at        Int?
+  token_type        String?
+  scope             String?
+  id_token          String?
+  session_state     String?
+
+  @@id([provider, providerAccountId])
+}
+
+model Session {
+  sessionToken String   @id
+  userId       String
+  user         User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  expires      DateTime
+}
+
+model VerificationToken {
+  identifier String
+  token      String
+  expires    DateTime
+
+  @@id([identifier, token])
+}
+
+model Onboarding {
+  userId           String   @id
+  user             User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  skillLevel       String
+  primaryInterest  String
+  diagnosticScore  Int?
+  completedAt      DateTime
+}
+
+model Streak {
+  userId          String  @id
+  user            User    @relation(fields: [userId], references: [id], onDelete: Cascade)
+  current         Int     @default(0)
+  longest         Int     @default(0)
+  lastActiveDate  String?
+  totalActiveDays Int     @default(0)
+}
+
+model Conversation {
+  id        String    @id
+  userId    String
+  user      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  title     String
+  updatedAt DateTime
+  messages  Message[]
+
+  @@index([userId, updatedAt])
+}
+
+model Message {
+  id             String       @id @default(cuid())
+  conversationId String
+  conversation   Conversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+  role           String
+  content        String
+  position       Int
+
+  @@index([conversationId, position])
+}
+
+model Progress {
+  id          String   @id @default(cuid())
+  userId      String
+  user        User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  trackSlug   String
+  scenarioSlug String
+  score       Int
+  completedAt DateTime
+
+  @@unique([userId, trackSlug, scenarioSlug])
+}
+
+model Workflow {
+  id        String   @id
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  name      String
+  prompt    String
+  createdAt DateTime
+
+  @@index([userId, createdAt])
+}
+
+model TaskEvaluation {
+  id        String   @id
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  taskText  String
+  result    String
+  createdAt DateTime
+
+  @@index([userId, createdAt])
+}
