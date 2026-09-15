@@ -49,4 +49,3 @@ without its keys set).
 See `PROJECT_PLAN.md` for the current architecture, what's locked in vs. still open,
 and the live database/deployment state. Read it before touching auth, the database
 schema, or the AI provider system.
-# promptly-beta

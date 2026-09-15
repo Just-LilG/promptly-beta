@@ -49,32 +49,54 @@ checkpoint.
 - **Local engine (WebLLM) and Cloud engine (server API providers) are both first-class.**
   Sandbox lets the user pick either. Don't remove the local/in-browser option when working on
   the cloud-provider system, or vice versa.
-- **User-to-user group chat ("Send") — REOPENED 2026-09-14, full UI built.** Was parked
-  earlier the same day; Jadon (the user) explicitly asked to start it, then asked for the full
-  interface (bubbles, menu, input, animations). **Built:**
-  - `src/components/send-fab.tsx` — circular teal FAB beside the bottom tab bar (mobile only),
-    routes to `/send`.
-  - `src/lib/send-mock-data.ts` — MOCK room/participants/messages. Explicitly labeled mock;
-    swap for real API calls when the backend exists. Shape (`MockMessage`, `MockSender`)
-    is meant to survive that swap.
-  - `src/components/send-client.tsx` — the full chat screen: WhatsApp-style grouped bubbles
-    reusing the real `.chat-bubble`/`chat-bubble-user`/`chat-bubble-ai` tail CSS, per-sender
-    tint colors (derived from `--accent` via `color-mix`, not a separate palette), day
-    separators, reply-to previews, a long-press/right-click action menu per bubble (Copy /
-    Reply / Delete-if-mine) built the same way as `message-actions.tsx`, a composer that
-    mirrors Sandbox's (rounded card, focus ring, avatar/attach/send affordances), the same
-    fly-to-chat send animation as Sandbox (`@keyframes fly-to-chat`), a typing indicator, and
-    a HistoryPanel-style full-screen members/room-info slide-up that explicitly discloses
-    "messages here aren't saved or sent to real people yet."
-  - `src/app/globals.css` — `.chat-bubble-ai::after` (the tail) now reads
-    `var(--chat-bubble-ai-tint, var(--surface))` instead of a hardcoded surface color, so
-    Send's tinted bubbles get a matching tail. Backward compatible: Sandbox never sets that
-    var, so its bubbles are pixel-identical to before.
-  - `src/app/send/page.tsx`, `src/app/send/loading.tsx` — route wrapper.
-  **Still not built:** any real backend — Neon message storage, signed-in posting, a
-  live-or-poll wire, moderation. The mock "auto-reply" timer in `send-client.tsx` is clearly a
-  local `setTimeout`, not a live connection — don't mistake it for one when picking this back
-  up. Not placed in `primaryNavItems` (nav.ts) — intentionally separate from the 4-tab bar.
+- **User-to-user group chat ("Send") — REAL BACKEND BUILT 2026-09-15.** Multiple public "Zones"
+  (topic rooms), not DMs — explicit product decision: no 1:1 private messaging, ever, just
+  rooms everyone can see. Posting requires a real signed-in session (not the anonymous
+  cookie-only user from `user-session.ts`) — also explicit, so a public space has accountable
+  identities. Reading is open to anyone, signed in or not.
+  **Data model** (`prisma/schema.prisma`): `Zone` (id, slug, name, description), `ZoneMessage`
+  (zoneId, authorId → User, text, replyToId self-relation, soft-delete via `deletedAt`),
+  `ZoneMessageReport` (unique per zoneMessageId+reporterId — minimal moderation trail, no
+  auto-hide/admin UI yet, manual review only). Deliberately separate from the existing
+  `Conversation`/`Message` models, which are private per-user Sandbox/AI chat history — do not
+  reuse those for Send, it would corrupt that data's ownership model. Migration applied live to
+  `shy-wildflower-98939074` (tested on a temp Neon branch first — insert, reply self-relation,
+  cascade/set-null-on-delete all verified before applying). **7 zones seeded**, matching the
+  app's real practice tracks: general, coding, writing, business, design, research, everyday.
+  **API** (`src/app/api/send/`): `GET /zones` (list + last-message preview, public),
+  `GET /zones/[slug]/messages?after=<ms>` (polling read, public — no `after` returns the most
+  recent 50; with `after`, everything newer), `POST /zones/[slug]/messages` (send — 401 if not
+  signed in, rate-limited via `src/lib/zone-rate-limit.ts` — in-memory, 5 msgs/10s per user,
+  **not** a distributed limiter, fine for single-region low-traffic but flagged as a real gap if
+  this scales across regions/instances — 1000 char cap), `DELETE /messages/[id]` (soft-delete,
+  own messages only), `POST /messages/[id]/report` (records a report, no action taken
+  automatically).
+  **Delivery is polling** (client asks "anything new?" every 3.5s), not a live socket — raw
+  long-lived WebSockets don't run well on Vercel's serverless model; a managed realtime
+  provider (Pusher/Ably/Supabase Realtime) would be the real upgrade if polling latency becomes
+  a problem, not yet built.
+  **Frontend:** `/send` (`send-zone-list-client.tsx`) — real zone list from the API, sorted by
+  seed order, shows last message + relative time. `/send/[slug]`
+  (`send-client.tsx`, rewritten from the earlier mock-data version — `send-mock-data.ts` was
+  deleted, nothing references it) — polls for new messages, per-author bubble tints via
+  `color-mix` against `--accent` (hashed from a stable authorId, not random), reply-to
+  previews, long-press/right-click menu (Copy always; Reply and Report only if signed in;
+  Delete only on your own messages), a "Sign in to post in {zone}" prompt replacing the
+  composer entirely when signed out, the fly-to-chat send animation preserved from the design
+  pass. Deleted messages render as a dashed "Message removed" placeholder rather than
+  vanishing, so reply-chains and scroll position don't break.
+  **Known real gaps, not yet built:** distributed rate limiting, an admin/mod UI for reviewing
+  `ZoneMessageReport` rows (currently query the DB by hand), live/instant delivery instead of
+  polling, zone creation by users (zones are seeded/curated only), any block-user feature.
+  `NAV_LABEL_KEY` in `src/lib/i18n/index.ts` still has no `/send` entry — sidebar label falls
+  back to plain English "Send" safely, not yet translated across the 5 locales.
+  **No typing indicator (decided 2026-09-15).** The earlier mock-data version had one, driven
+  by a fake `setTimeout`; it was dropped (silently, which was a miss) when send-client.tsx was
+  rewritten against the real backend. Jadon was asked to choose between skipping it, building a
+  rough poll-based approximation now, or waiting until real-time delivery exists — he chose to
+  wait. Do not add a typing indicator on top of the current polling model; build it once
+  message delivery itself moves to a realtime provider (see the "live/instant delivery" gap
+  above), where it becomes close to free rather than its own laggy, DB-load-heavy feature.
 - **Theme is a phone setting, stored locally (2026-09-14).** `promptly:theme` is
   `light` | `dark` | `system`. CSS uses `html[data-theme]`. Do not invent a
   second theme system or put theme in Neon.
